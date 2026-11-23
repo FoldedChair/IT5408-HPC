@@ -1,0 +1,1484 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+% PACKAGES
+% ============================================================
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+
+% ============================================================
+% HYPERREF SETUP
+% ============================================================
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={Pipeline Parallelism Neural Network with MPI},
+    pdfauthor={Technical Documentation},
+}
+
+% ============================================================
+% LISTINGS CONFIGURATION
+% ============================================================
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\definecolor{keywordcolor}{rgb}{0.0,0.0,0.7}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{keywordcolor}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=4,
+    frame=single,
+    framerule=0.5pt,
+    rulecolor=\color{codegray},
+}
+
+\lstset{style=mystyle}
+
+% ============================================================
+% DOCUMENT INFO
+% ============================================================
+\title{%
+    \textbf{Pipeline Parallelism for Fully Connected Neural Networks} \\
+    \large Using MPI (Message Passing Interface) \\
+    \vspace{0.5cm}
+    \normalsize Technical Documentation for \texttt{fcn\_mpi.c}
+}
+\author{High Performance Computing Project}
+\date{February 2026}
+
+% ============================================================
+% DOCUMENT BEGIN
+% ============================================================
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+% EXECUTIVE SUMMARY
+% ============================================================
+\section{Executive Summary}
+
+This document explains a C program that implements \textbf{pipeline parallelism} for training a fully connected neural network (FCN) on the MNIST handwritten digit dataset using \textbf{MPI} (Message Passing Interface).
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black,title=Key Points]
+\begin{itemize}[noitemsep]
+    \item \textbf{Purpose}: Train a 3-layer neural network using distributed computing across 3 MPI processes.
+    \item \textbf{Architecture}: 784 $\rightarrow$ 256 $\rightarrow$ 128 $\rightarrow$ 10 neurons.
+    \item \textbf{Parallelism Model}: Pipeline parallelism where each process handles specific layers.
+    \item \textbf{Dataset}: MNIST (60,000 training images, 10,000 test images).
+    \item \textbf{Communication}: MPI point-to-point operations (\texttt{MPI\_Send}/\texttt{MPI\_Recv}).
+    \item \textbf{Training}: Stochastic Gradient Descent (SGD) with backpropagation.
+\end{itemize}
+\end{tcolorbox}
+
+The program distributes the neural network layers across three processes:
+\begin{itemize}
+    \item \textbf{Process 0}: Handles input data and Hidden Layer 1
+    \item \textbf{Process 1}: Handles Hidden Layer 2
+    \item \textbf{Process 2}: Handles Output Layer and loss calculation
+\end{itemize}
+
+% ============================================================
+% CONTEXT & ASSUMPTIONS
+% ============================================================
+\section{Context \& Assumptions}
+
+\subsection{Runtime Environment}
+
+\begin{itemize}
+    \item \textbf{Operating System}: Linux/Unix-based systems (tested on Linux)
+    \item \textbf{Compiler}: \texttt{mpicc} (MPI C compiler wrapper)
+    \item \textbf{MPI Implementation}: OpenMPI, MPICH, or compatible MPI library
+    \item \textbf{C Standard}: C99 or later
+    \item \textbf{Required Libraries}: 
+    \begin{itemize}
+        \item \texttt{math.h} (mathematical functions)
+        \item \texttt{mpi.h} (MPI functions)
+        \item Standard C libraries (\texttt{stdio.h}, \texttt{stdlib.h}, \texttt{string.h}, \texttt{stdint.h}, \texttt{time.h})
+    \end{itemize}
+\end{itemize}
+
+\subsection{Input Requirements}
+
+The program expects MNIST dataset files in the \texttt{data/} directory:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{File} & \textbf{Description} \\
+\midrule
+\texttt{train-images-idx3-ubyte} & Training images (60,000 samples) \\
+\texttt{train-labels-idx1-ubyte} & Training labels \\
+\texttt{t10k-images-idx3-ubyte} & Test images (10,000 samples) \\
+\texttt{t10k-labels-idx1-ubyte} & Test labels \\
+\bottomrule
+\end{tabular}
+\caption{Required MNIST dataset files}
+\end{table}
+
+\subsection{Output}
+
+\begin{itemize}
+    \item Training progress: Loss per epoch and time per epoch
+    \item Final test accuracy percentage
+    \item Total execution time
+\end{itemize}
+
+\subsection{Assumptions}
+
+\begin{enumerate}
+    \item Exactly 3 MPI processes are launched
+    \item MNIST files are in IDX format (standard MNIST binary format)
+    \item Sufficient memory available on each process for layer weights and activations
+    \item All processes can communicate via MPI (shared memory or network)
+\end{enumerate}
+
+% ============================================================
+% HIGH-LEVEL ARCHITECTURE
+% ============================================================
+\section{High-Level Architecture}
+
+\subsection{Module Organization}
+
+The code is organized into logical sections within a single file:
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[colback=gray!10,colframe=gray!50,width=0.9\textwidth]
+\begin{verbatim}
+fcn_mpi.c
+├── Configuration (Macros/Constants)
+├── Data Structures
+│   ├── Tensor
+│   └── DenseLayer
+├── Tensor Operations
+├── Dense Layer Operations
+├── Activation Functions (ReLU, Softmax)
+├── Loss Functions (Cross-Entropy)
+├── Dataset Loading (MNIST IDX format)
+├── Process-specific Functions
+│   ├── process_0_run() - Input + Layer 1
+│   ├── process_1_run() - Layer 2
+│   └── process_2_run() - Output + Loss
+└── Main Function
+\end{verbatim}
+\end{tcolorbox}
+\caption{Code organization}
+\end{figure}
+
+\subsection{Pipeline Parallelism Model}
+
+\textbf{Pipeline parallelism} divides a neural network vertically by layers, with each process responsible for one or more consecutive layers.
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[colback=green!5,colframe=green!50!black,width=0.95\textwidth]
+\textbf{Forward Pass Data Flow:}
+\begin{verbatim}
+Process 0              Process 1              Process 2
+─────────              ─────────              ─────────
+Input (784)
+    │
+Dense Layer 1
+(784 → 256)
+    │
+ReLU
+    │
+    └──── a1 (256) ────►
+                       Dense Layer 2
+                       (256 → 128)
+                           │
+                         ReLU
+                           │
+                           └──── a2 (128) ────►
+                                               Dense Layer 3
+                                               (128 → 10)
+                                                   │
+                                               Softmax
+                                                   │
+                                               Loss ◄── label
+\end{verbatim}
+\end{tcolorbox}
+\caption{Forward pass data flow between processes}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[colback=red!5,colframe=red!50!black,width=0.95\textwidth]
+\textbf{Backward Pass Gradient Flow:}
+\begin{verbatim}
+Process 0              Process 1              Process 2
+─────────              ─────────              ─────────
+                                               Loss Gradient
+                                                   │
+                                               Dense3 Backward
+                                                   │
+                       ◄──── grad_a2 (128) ────────┘
+                       ReLU Backward
+                           │
+                       Dense2 Backward
+                           │
+◄──── grad_a1 (256) ───────┘
+ReLU Backward
+    │
+Dense1 Backward
+    │
+(No further propagation)
+\end{verbatim}
+\end{tcolorbox}
+\caption{Backward pass gradient flow between processes}
+\end{figure}
+
+\subsection{Process Responsibilities}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}clll@{}}
+\toprule
+\textbf{Process} & \textbf{Layers} & \textbf{Dimensions} & \textbf{Additional Tasks} \\
+\midrule
+0 & Input + Dense1 + ReLU & 784 $\rightarrow$ 256 & Load dataset, print results \\
+1 & Dense2 + ReLU & 256 $\rightarrow$ 128 & Relay gradients \\
+2 & Dense3 + Softmax & 128 $\rightarrow$ 10 & Calculate loss, accuracy \\
+\bottomrule
+\end{tabular}
+\caption{Process responsibilities in pipeline}
+\end{table}
+
+% ============================================================
+% STEP-BY-STEP WALKTHROUGH
+% ============================================================
+\section{Step-by-Step Walkthrough}
+
+This section describes the execution flow from program start to finish.
+
+\subsection{Step 1: MPI Initialization}
+
+\begin{lstlisting}[language=C, caption={MPI initialization in main()}]
+int main(int argc, char *argv[]) {
+    int rank, size;
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{MPI\_Init}: Initializes the MPI execution environment
+    \item \texttt{MPI\_Comm\_rank}: Gets the unique identifier (rank) of the calling process
+    \item \texttt{MPI\_Comm\_size}: Gets the total number of processes
+\end{itemize}
+
+\subsection{Step 2: Validation and Setup}
+
+\begin{lstlisting}[language=C, caption={Process count validation}]
+    if (size != NUM_PROCESSES) {
+        if (rank == 0) {
+            fprintf(stderr, "Error: This program requires exactly %d MPI processes.\n", NUM_PROCESSES);
+        }
+        MPI_Finalize();
+        return 1;
+    }
+
+    srand(42 + rank);  /* Different seed for each process, but reproducible */
+\end{lstlisting}
+
+\begin{itemize}
+    \item Ensures exactly 3 processes are running
+    \item Each process gets a unique but reproducible random seed
+\end{itemize}
+
+\subsection{Step 3: Dataset Loading (Process 0 Only)}
+
+\begin{lstlisting}[language=C, caption={Dataset loading by Process 0}]
+    if (rank == 0) {
+        load_mnist(&train, &test);
+        num_train_samples = train.num_samples;
+        num_test_samples = test.num_samples;
+    }
+
+    /* Broadcast dataset sizes to all processes */
+    MPI_Bcast(&num_train_samples, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&num_test_samples, 1, MPI_INT, 0, MPI_COMM_WORLD);
+\end{lstlisting}
+
+\begin{itemize}
+    \item Only Process 0 loads the MNIST dataset from disk
+    \item Dataset sizes are broadcast to all processes using \texttt{MPI\_Bcast}
+    \item This is a \textbf{collective operation} -- all processes must call it
+\end{itemize}
+
+\subsection{Step 4: Process Dispatch}
+
+\begin{lstlisting}[language=C, caption={Process dispatch based on rank}]
+    switch (rank) {
+        case 0:
+            process_0_run(&train, &test, num_train_samples);
+            break;
+        case 1:
+            process_1_run(num_train_samples, num_test_samples);
+            break;
+        case 2:
+            process_2_run(num_train_samples, num_test_samples);
+            break;
+    }
+\end{lstlisting}
+
+Each process executes its designated function based on its rank.
+
+\subsection{Step 5: Training Loop (Per Sample)}
+
+For each training sample, the following sequence occurs:
+
+\begin{enumerate}
+    \item \textbf{Process 0}:
+    \begin{enumerate}[label=\alph*.]
+        \item Load image from dataset
+        \item Forward pass through Dense Layer 1 + ReLU
+        \item Send activation \texttt{a1} to Process 1
+        \item Send label to Process 2
+        \item Wait for gradient from Process 1
+        \item Backward pass and weight update
+    \end{enumerate}
+    
+    \item \textbf{Process 1}:
+    \begin{enumerate}[label=\alph*.]
+        \item Receive activation \texttt{a1} from Process 0
+        \item Forward pass through Dense Layer 2 + ReLU
+        \item Send activation \texttt{a2} to Process 2
+        \item Wait for gradient from Process 2
+        \item Backward pass
+        \item Send gradient to Process 0
+        \item Weight update
+    \end{enumerate}
+    
+    \item \textbf{Process 2}:
+    \begin{enumerate}[label=\alph*.]
+        \item Receive activation \texttt{a2} from Process 1
+        \item Receive label from Process 0
+        \item Forward pass through Dense Layer 3 + Softmax
+        \item Calculate cross-entropy loss
+        \item Backward pass
+        \item Send gradient to Process 1
+        \item Weight update
+    \end{enumerate}
+\end{enumerate}
+
+\subsection{Step 6: Epoch Completion}
+
+After all samples in an epoch:
+\begin{itemize}
+    \item Process 2 calculates average loss and sends to Process 0
+    \item Process 0 prints epoch statistics (loss, time)
+\end{itemize}
+
+\subsection{Step 7: Evaluation}
+
+After training completes:
+\begin{itemize}
+    \item Forward pass only (no backpropagation)
+    \item Process 2 counts correct predictions
+    \item Accuracy sent to Process 0 for display
+\end{itemize}
+
+\subsection{Step 8: Cleanup}
+
+\begin{lstlisting}[language=C, caption={Cleanup and finalization}]
+    if (rank == 0) {
+        printf("\nTotal execution time: %.2f seconds\n", end_time - start_time);
+        free_dataset(&train);
+        free_dataset(&test);
+    }
+
+    MPI_Finalize();
+    return 0;
+\end{lstlisting}
+
+% ============================================================
+% DETAILED EXPLANATION BY COMPONENT
+% ============================================================
+\section{Detailed Explanation by Component}
+
+\subsection{Configuration Constants}
+
+\begin{lstlisting}[language=C, caption={Configuration macros}]
+#define INPUT_SIZE     784      // 28x28 pixel images flattened
+#define HIDDEN1_SIZE   256      // First hidden layer neurons
+#define HIDDEN2_SIZE   128      // Second hidden layer neurons
+#define NUM_CLASSES    10       // Digits 0-9
+
+#define EPOCHS         10       // Training iterations over dataset
+#define LEARNING_RATE  0.01f    // SGD step size
+#define EPSILON        1e-7f    // Small value to prevent log(0)
+
+#define NUM_PROCESSES  3        // Required MPI processes
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{INPUT\_SIZE}: MNIST images are 28$\times$28 = 784 pixels
+    \item \texttt{HIDDEN1\_SIZE}, \texttt{HIDDEN2\_SIZE}: Hidden layer dimensions (can be tuned)
+    \item \texttt{NUM\_CLASSES}: 10 digit classes (0-9)
+    \item \texttt{LEARNING\_RATE}: Controls how much weights change per update
+    \item \texttt{EPSILON}: Prevents numerical instability in logarithm
+\end{itemize}
+
+\subsection{MPI Tags}
+
+\begin{lstlisting}[language=C, caption={MPI communication tags}]
+#define TAG_FORWARD_A1     100  // Activation from layer 1
+#define TAG_FORWARD_A2     101  // Activation from layer 2
+#define TAG_FORWARD_LABEL  102  // Label for loss calculation
+#define TAG_BACKWARD_GRAD1 200  // Gradient to layer 1
+#define TAG_BACKWARD_GRAD2 201  // Gradient to layer 2
+#define TAG_LOSS           300  // Loss/accuracy value
+\end{lstlisting}
+
+\textbf{Tags} in MPI distinguish different message types, allowing a process to receive specific messages.
+
+\subsection{Tensor Structure}
+
+\begin{lstlisting}[language=C, caption={Tensor data structure}]
+typedef struct {
+    float *data;    // Pointer to contiguous float array
+    int rows;       // Number of rows
+    int cols;       // Number of columns
+} Tensor;
+\end{lstlisting}
+
+\textbf{Purpose}: A simple 2D matrix representation for storing weights, activations, and gradients.
+
+\subsubsection{tensor\_create}
+
+\begin{lstlisting}[language=C, caption={Tensor creation function}]
+Tensor tensor_create(int rows, int cols) {
+    Tensor t;
+    t.rows = rows;
+    t.cols = cols;
+    t.data = (float *)calloc(rows * cols, sizeof(float));
+    return t;
+}
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Parameters}: \texttt{rows}, \texttt{cols} -- dimensions of the tensor
+    \item \textbf{Returns}: Initialized \texttt{Tensor} struct
+    \item \textbf{Memory}: Uses \texttt{calloc} to zero-initialize memory
+    \item \textbf{Side Effects}: Allocates heap memory (must be freed)
+\end{itemize}
+
+\subsubsection{tensor\_free}
+
+\begin{lstlisting}[language=C, caption={Tensor deallocation}]
+void tensor_free(Tensor *t) {
+    if (t->data) {
+        free(t->data);
+        t->data = NULL;
+    }
+}
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Purpose}: Safely deallocates tensor memory
+    \item \textbf{Side Effects}: Sets \texttt{data} to \texttt{NULL} to prevent double-free
+\end{itemize}
+
+\subsubsection{tensor\_zero}
+
+\begin{lstlisting}[language=C, caption={Zero-fill tensor}]
+void tensor_zero(Tensor *t) {
+    memset(t->data, 0, t->rows * t->cols * sizeof(float));
+}
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Purpose}: Sets all elements to zero
+    \item \textbf{Usage}: Initializing bias vectors, clearing gradients
+\end{itemize}
+
+\subsection{Dense Layer Structure}
+
+\begin{lstlisting}[language=C, caption={Dense layer data structure}]
+typedef struct {
+    Tensor weights;      // Weight matrix (out_size x in_size)
+    Tensor bias;         // Bias vector (out_size x 1)
+    Tensor grad_w;       // Weight gradients
+    Tensor grad_b;       // Bias gradients
+    Tensor input_cache;  // Cached input for backprop
+    int in_size;         // Input dimension
+    int out_size;        // Output dimension
+} DenseLayer;
+\end{lstlisting}
+
+A \textbf{dense layer} (fully connected layer) computes: $\mathbf{y} = \mathbf{W}\mathbf{x} + \mathbf{b}$
+
+\subsubsection{dense\_init}
+
+\begin{lstlisting}[language=C, caption={Dense layer initialization}]
+void dense_init(DenseLayer *l, int in, int out) {
+    l->in_size = in;
+    l->out_size = out;
+    l->weights = tensor_create(out, in);
+    l->bias = tensor_create(out, 1);
+    l->grad_w = tensor_create(out, in);
+    l->grad_b = tensor_create(out, 1);
+    l->input_cache = tensor_create(in, 1);
+
+    for (int i = 0; i < out * in; i++) {
+        l->weights.data[i] = rand_uniform(-0.05f, 0.05f);
+    }
+    tensor_zero(&l->bias);
+}
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Parameters}: \texttt{in} (input size), \texttt{out} (output size)
+    \item \textbf{Weight Initialization}: Random uniform in $[-0.05, 0.05]$
+    \item \textbf{Bias Initialization}: Zero
+    \item \textbf{Memory}: Allocates 5 tensors per layer
+\end{itemize}
+
+\subsubsection{dense\_forward}
+
+\begin{lstlisting}[language=C, caption={Dense layer forward pass}]
+void dense_forward(DenseLayer *l, float *input, float *output) {
+    int out = l->out_size;
+    int in = l->in_size;
+
+    /* Cache input for backward pass */
+    memcpy(l->input_cache.data, input, in * sizeof(float));
+
+    for (int i = 0; i < out; i++) {
+        float sum = l->bias.data[i];
+        for (int j = 0; j < in; j++) {
+            sum += l->weights.data[i * in + j] * input[j];
+        }
+        output[i] = sum;
+    }
+}
+\end{lstlisting}
+
+\textbf{Mathematical Operation}:
+\begin{equation}
+y_i = b_i + \sum_{j=0}^{\text{in}-1} W_{ij} \cdot x_j
+\end{equation}
+
+\begin{itemize}
+    \item \textbf{Input Caching}: Stores input for use in backward pass
+    \item \textbf{Time Complexity}: $O(\text{in} \times \text{out})$
+\end{itemize}
+
+\subsubsection{dense\_backward}
+
+\begin{lstlisting}[language=C, caption={Dense layer backward pass}]
+void dense_backward(DenseLayer *l, float *grad_out, float *grad_in) {
+    int out = l->out_size;
+    int in = l->in_size;
+
+    /* dW = grad_out * input^T */
+    for (int i = 0; i < out; i++) {
+        for (int j = 0; j < in; j++) {
+            l->grad_w.data[i * in + j] = grad_out[i] * l->input_cache.data[j];
+        }
+    }
+
+    /* db = grad_out */
+    for (int i = 0; i < out; i++) {
+        l->grad_b.data[i] = grad_out[i];
+    }
+
+    /* dInput = W^T * grad_out */
+    if (grad_in != NULL) {
+        for (int j = 0; j < in; j++) {
+            float sum = 0.0f;
+            for (int i = 0; i < out; i++) {
+                sum += l->weights.data[i * in + j] * grad_out[i];
+            }
+            grad_in[j] = sum;
+        }
+    }
+}
+\end{lstlisting}
+
+\textbf{Gradient Calculations} (using chain rule):
+\begin{align}
+\frac{\partial L}{\partial W_{ij}} &= \frac{\partial L}{\partial y_i} \cdot x_j \\
+\frac{\partial L}{\partial b_i} &= \frac{\partial L}{\partial y_i} \\
+\frac{\partial L}{\partial x_j} &= \sum_{i=0}^{\text{out}-1} W_{ij} \cdot \frac{\partial L}{\partial y_i}
+\end{align}
+
+\begin{itemize}
+    \item \texttt{grad\_out}: Gradient from the next layer ($\frac{\partial L}{\partial y}$)
+    \item \texttt{grad\_in}: Gradient to propagate to previous layer (can be \texttt{NULL} for first layer)
+\end{itemize}
+
+\subsubsection{sgd\_update}
+
+\begin{lstlisting}[language=C, caption={SGD weight update}]
+void sgd_update(DenseLayer *l, float lr) {
+    int n_w = l->out_size * l->in_size;
+    for (int i = 0; i < n_w; i++) {
+        l->weights.data[i] -= lr * l->grad_w.data[i];
+    }
+    for (int i = 0; i < l->out_size; i++) {
+        l->bias.data[i] -= lr * l->grad_b.data[i];
+    }
+}
+\end{lstlisting}
+
+\textbf{SGD Update Rule}:
+\begin{equation}
+\theta_{t+1} = \theta_t - \eta \cdot \nabla_\theta L
+\end{equation}
+
+where $\eta$ is the learning rate and $\nabla_\theta L$ is the gradient.
+
+\subsection{Activation Functions}
+
+\subsubsection{ReLU (Rectified Linear Unit)}
+
+\begin{lstlisting}[language=C, caption={ReLU activation}]
+void relu_forward(float *x, float *out, int n) {
+    for (int i = 0; i < n; i++) {
+        out[i] = (x[i] > 0.0f) ? x[i] : 0.0f;
+    }
+}
+
+void relu_backward(float *x, float *grad_out, float *grad_in, int n) {
+    for (int i = 0; i < n; i++) {
+        grad_in[i] = (x[i] > 0.0f) ? grad_out[i] : 0.0f;
+    }
+}
+\end{lstlisting}
+
+\textbf{ReLU Function}:
+\begin{equation}
+\text{ReLU}(x) = \max(0, x)
+\end{equation}
+
+\textbf{ReLU Derivative}:
+\begin{equation}
+\frac{\partial \text{ReLU}}{\partial x} = 
+\begin{cases}
+1 & \text{if } x > 0 \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\subsubsection{Softmax}
+
+\begin{lstlisting}[language=C, caption={Softmax activation}]
+void softmax(float *x, float *out, int n) {
+    float max_val = x[0];
+    for (int i = 1; i < n; i++) {
+        if (x[i] > max_val) max_val = x[i];
+    }
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        out[i] = expf(x[i] - max_val);  // Subtract max for numerical stability
+        sum += out[i];
+    }
+
+    for (int i = 0; i < n; i++) {
+        out[i] /= sum;
+    }
+}
+\end{lstlisting}
+
+\textbf{Softmax Function}:
+\begin{equation}
+\text{softmax}(x_i) = \frac{e^{x_i - \max(x)}}{\sum_{j} e^{x_j - \max(x)}}
+\end{equation}
+
+The $\max(x)$ subtraction prevents numerical overflow when exponentiating large values.
+
+\subsection{Loss Functions}
+
+\subsubsection{Cross-Entropy Loss}
+
+\begin{lstlisting}[language=C, caption={Cross-entropy loss}]
+float cross_entropy_loss(float *probs, int label) {
+    float p = probs[label];
+    if (p < EPSILON) p = EPSILON;  // Prevent log(0)
+    return -logf(p);
+}
+\end{lstlisting}
+
+\textbf{Cross-Entropy Loss}:
+\begin{equation}
+L = -\log(p_{\text{label}})
+\end{equation}
+
+where $p_{\text{label}}$ is the predicted probability for the correct class.
+
+\subsubsection{Cross-Entropy Backward}
+
+\begin{lstlisting}[language=C, caption={Cross-entropy gradient}]
+void cross_entropy_backward(float *probs, int label, float *grad, int n) {
+    for (int i = 0; i < n; i++) {
+        grad[i] = probs[i];
+    }
+    grad[label] -= 1.0f;
+}
+\end{lstlisting}
+
+\textbf{Gradient} (combined softmax + cross-entropy):
+\begin{equation}
+\frac{\partial L}{\partial z_i} = p_i - \mathbf{1}_{i=\text{label}}
+\end{equation}
+
+This elegant formula is the result of combining the softmax and cross-entropy derivatives.
+
+\subsection{Dataset Loading}
+
+\subsubsection{IDX File Format}
+
+MNIST uses the IDX file format:
+
+\begin{tcolorbox}[colback=yellow!10,colframe=yellow!50!black,title=IDX Image File Format]
+\begin{verbatim}
+[offset] [type]          [description]
+0000     32-bit integer  magic number (0x00000803)
+0004     32-bit integer  number of images
+0008     32-bit integer  number of rows (28)
+0012     32-bit integer  number of columns (28)
+0016     unsigned byte   pixel data (row-major)
+...
+\end{verbatim}
+\end{tcolorbox}
+
+\subsubsection{read\_u32}
+
+\begin{lstlisting}[language=C, caption={Big-endian 32-bit read}]
+static uint32_t read_u32(FILE *f) {
+    uint8_t b[4];
+    fread(b, 1, 4, f);
+    return (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
+}
+\end{lstlisting}
+
+IDX files use \textbf{big-endian} byte order. This function reads 4 bytes and converts to native integer.
+
+\subsubsection{read\_idx\_images}
+
+\begin{lstlisting}[language=C, caption={Reading MNIST images}]
+float *read_idx_images(const char *path, int *count) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "Error: Cannot open %s\n", path);
+        return NULL;
+    }
+
+    read_u32(f);               /* magic number - ignored */
+    *count = read_u32(f);      /* number of images */
+    int rows = read_u32(f);    /* 28 */
+    int cols = read_u32(f);    /* 28 */
+
+    int size = (*count) * rows * cols;
+    float *data = (float *)malloc(sizeof(float) * size);
+
+    for (int i = 0; i < size; i++) {
+        unsigned char pixel;
+        fread(&pixel, 1, 1, f);
+        data[i] = pixel / 255.0f;  // Normalize to [0, 1]
+    }
+
+    fclose(f);
+    return data;
+}
+\end{lstlisting}
+
+\begin{itemize}
+    \item Reads binary pixel data
+    \item Normalizes from $[0, 255]$ to $[0.0, 1.0]$
+    \item Returns flattened array (all images concatenated)
+\end{itemize}
+
+\subsection{Process Functions}
+
+\subsubsection{process\_0\_run (Input + Layer 1)}
+
+\begin{lstlisting}[language=C, caption={Process 0 main loop (training)}]
+void process_0_run(Dataset *train, Dataset *test, int num_samples) {
+    DenseLayer l1;
+    dense_init(&l1, INPUT_SIZE, HIDDEN1_SIZE);
+
+    /* Allocate buffers */
+    float *x = (float *)malloc(INPUT_SIZE * sizeof(float));
+    float *z1 = (float *)malloc(HIDDEN1_SIZE * sizeof(float));
+    float *a1 = (float *)malloc(HIDDEN1_SIZE * sizeof(float));
+    float *grad_a1 = (float *)malloc(HIDDEN1_SIZE * sizeof(float));
+    float *grad_z1 = (float *)malloc(HIDDEN1_SIZE * sizeof(float));
+
+    for (int epoch = 0; epoch < EPOCHS; epoch++) {
+        for (int i = 0; i < num_samples; i++) {
+            /* Load input */
+            memcpy(x, &train->images[i * INPUT_SIZE], INPUT_SIZE * sizeof(float));
+            int label = train->labels[i];
+
+            /* Forward pass */
+            dense_forward(&l1, x, z1);
+            relu_forward(z1, a1, HIDDEN1_SIZE);
+
+            /* Send to other processes */
+            MPI_Send(a1, HIDDEN1_SIZE, MPI_FLOAT, 1, TAG_FORWARD_A1, MPI_COMM_WORLD);
+            MPI_Send(&label, 1, MPI_INT, 2, TAG_FORWARD_LABEL, MPI_COMM_WORLD);
+
+            /* Receive gradient */
+            MPI_Recv(grad_a1, HIDDEN1_SIZE, MPI_FLOAT, 1, TAG_BACKWARD_GRAD1, 
+                     MPI_COMM_WORLD, &status);
+
+            /* Backward pass */
+            relu_backward(z1, grad_a1, grad_z1, HIDDEN1_SIZE);
+            dense_backward(&l1, grad_z1, NULL);
+
+            /* Update weights */
+            sgd_update(&l1, LEARNING_RATE);
+        }
+        /* ... epoch statistics ... */
+    }
+}
+\end{lstlisting}
+
+\textbf{Key MPI Operations}:
+\begin{itemize}
+    \item \texttt{MPI\_Send(a1, ...)}: Sends 256 floats to Process 1
+    \item \texttt{MPI\_Send(\&label, ...)}: Sends integer label to Process 2
+    \item \texttt{MPI\_Recv(grad\_a1, ...)}: Blocking receive for gradient
+\end{itemize}
+
+\subsubsection{process\_1\_run (Layer 2)}
+
+Process 1 acts as a \textbf{relay} between Process 0 and Process 2:
+
+\begin{lstlisting}[language=C, caption={Process 1 main loop}]
+void process_1_run(int num_train_samples, int num_test_samples) {
+    DenseLayer l2;
+    dense_init(&l2, HIDDEN1_SIZE, HIDDEN2_SIZE);
+
+    for (int epoch = 0; epoch < EPOCHS; epoch++) {
+        for (int i = 0; i < num_train_samples; i++) {
+            /* Receive from Process 0 */
+            MPI_Recv(a1, HIDDEN1_SIZE, MPI_FLOAT, 0, TAG_FORWARD_A1, ...);
+
+            /* Forward pass */
+            dense_forward(&l2, a1, z2);
+            relu_forward(z2, a2, HIDDEN2_SIZE);
+
+            /* Send to Process 2 */
+            MPI_Send(a2, HIDDEN2_SIZE, MPI_FLOAT, 2, TAG_FORWARD_A2, ...);
+
+            /* Receive gradient from Process 2 */
+            MPI_Recv(grad_a2, HIDDEN2_SIZE, MPI_FLOAT, 2, TAG_BACKWARD_GRAD2, ...);
+
+            /* Backward pass */
+            relu_backward(z2, grad_a2, grad_z2, HIDDEN2_SIZE);
+            dense_backward(&l2, grad_z2, grad_a1);
+
+            /* Send gradient to Process 0 */
+            MPI_Send(grad_a1, HIDDEN1_SIZE, MPI_FLOAT, 0, TAG_BACKWARD_GRAD1, ...);
+
+            /* Update weights */
+            sgd_update(&l2, LEARNING_RATE);
+        }
+    }
+}
+\end{lstlisting}
+
+\subsubsection{process\_2\_run (Output + Loss)}
+
+\begin{lstlisting}[language=C, caption={Process 2 main loop}]
+void process_2_run(int num_train_samples, int num_test_samples) {
+    DenseLayer l3;
+    dense_init(&l3, HIDDEN2_SIZE, NUM_CLASSES);
+
+    for (int epoch = 0; epoch < EPOCHS; epoch++) {
+        float total_loss = 0.0f;
+
+        for (int i = 0; i < num_train_samples; i++) {
+            /* Receive activation and label */
+            MPI_Recv(a2, HIDDEN2_SIZE, MPI_FLOAT, 1, TAG_FORWARD_A2, ...);
+            MPI_Recv(&label, 1, MPI_INT, 0, TAG_FORWARD_LABEL, ...);
+
+            /* Forward pass */
+            dense_forward(&l3, a2, z3);
+            softmax(z3, probs, NUM_CLASSES);
+
+            /* Calculate loss */
+            total_loss += cross_entropy_loss(probs, label);
+
+            /* Backward pass */
+            cross_entropy_backward(probs, label, grad_z3, NUM_CLASSES);
+            dense_backward(&l3, grad_z3, grad_a2);
+
+            /* Send gradient to Process 1 */
+            MPI_Send(grad_a2, HIDDEN2_SIZE, MPI_FLOAT, 1, TAG_BACKWARD_GRAD2, ...);
+
+            /* Update weights */
+            sgd_update(&l3, LEARNING_RATE);
+        }
+
+        /* Send average loss to Process 0 */
+        float avg_loss = total_loss / num_train_samples;
+        MPI_Send(&avg_loss, 1, MPI_FLOAT, 0, TAG_LOSS, MPI_COMM_WORLD);
+    }
+}
+\end{lstlisting}
+
+% ============================================================
+% DATA FLOW & CONTROL FLOW
+% ============================================================
+\section{Data Flow \& Control Flow}
+
+\subsection{Data Flow Diagram}
+
+\begin{figure}[h]
+\centering
+\begin{tcolorbox}[colback=white,colframe=black,width=\textwidth]
+\begin{verbatim}
+                    TRAINING: One Sample Iteration
+    
+    Process 0                Process 1                Process 2
+    ─────────                ─────────                ─────────
+    Load x, label
+         │
+    z1 = W1*x + b1
+    a1 = ReLU(z1)
+         │
+         ├─── a1 (256 floats) ───►
+         │                    Recv a1
+         │                    z2 = W2*a1 + b2
+         │                    a2 = ReLU(z2)
+         │                         │
+         │                         ├─── a2 (128 floats) ───►
+         │                         │                    Recv a2
+         ├─── label (1 int) ───────┼────────────────────►Recv label
+         │                         │                    z3 = W3*a2 + b3
+         │                         │                    probs = softmax(z3)
+         │                         │                    loss = -log(probs[label])
+         │                         │                    grad_z3 = probs - one_hot
+         │                         │                    grad_a2 = W3^T * grad_z3
+         │                         │                         │
+         │                         ◄─── grad_a2 (128) ───────┤
+         │                    grad_z2 = grad_a2 * ReLU'
+         │                    grad_a1 = W2^T * grad_z2
+         │                         │
+         ◄─── grad_a1 (256) ───────┤
+    grad_z1 = grad_a1 * ReLU'
+    grad_W1, grad_b1 computed
+    W1 -= lr * grad_W1
+\end{verbatim}
+\end{tcolorbox}
+\caption{Complete data flow for one training sample}
+\end{figure}
+
+\subsection{Control Flow}
+
+The control flow follows a strict \textbf{synchronous} pattern:
+
+\begin{enumerate}
+    \item All processes start and initialize their layers
+    \item \texttt{MPI\_Bcast} synchronizes dataset sizes
+    \item Training loop:
+    \begin{itemize}
+        \item Process 0 \textit{leads} by loading data and initiating forward pass
+        \item Process 1 \textit{waits} for P0, then forwards to P2
+        \item Process 2 \textit{waits} for P1, computes loss, \textit{initiates} backward pass
+        \item Gradients flow back: P2 $\rightarrow$ P1 $\rightarrow$ P0
+        \item All processes update weights independently
+    \end{itemize}
+    \item After each epoch, P2 sends loss to P0
+    \item Evaluation follows similar forward-only pattern
+    \item \texttt{MPI\_Finalize} ensures clean shutdown
+\end{enumerate}
+
+\subsection{Synchronization Points}
+
+The program uses \textbf{blocking} MPI operations, creating implicit synchronization:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Operation} & \textbf{Sender Blocks Until} & \textbf{Receiver Blocks Until} \\
+\midrule
+\texttt{MPI\_Send} & Buffer can be reused & N/A \\
+\texttt{MPI\_Recv} & N/A & Message received \\
+\texttt{MPI\_Bcast} & All processes call it & All processes call it \\
+\bottomrule
+\end{tabular}
+\caption{MPI synchronization behavior}
+\end{table}
+
+% ============================================================
+% ERROR HANDLING & EDGE CASES
+% ============================================================
+\section{Error Handling \& Edge Cases}
+
+\subsection{Current Error Handling}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Error Condition} & \textbf{Handling} & \textbf{Location} \\
+\midrule
+Wrong process count & Print error, exit & \texttt{main()} \\
+File open failure & Print error, return NULL & \texttt{read\_idx\_*} \\
+Dataset load failure & \texttt{MPI\_Abort} & \texttt{main()} \\
+Log of zero & Clamp to \texttt{EPSILON} & \texttt{cross\_entropy\_loss} \\
+\bottomrule
+\end{tabular}
+\caption{Error handling mechanisms}
+\end{table}
+
+\subsection{Edge Cases}
+
+\begin{enumerate}
+    \item \textbf{Empty dataset}: Would cause division by zero in loss averaging
+    \item \textbf{Memory allocation failure}: \texttt{malloc}/\texttt{calloc} return values not checked
+    \item \textbf{MPI failures}: MPI function return codes not checked
+    \item \textbf{Numerical overflow}: Softmax uses max-subtraction to prevent overflow
+    \item \textbf{All-negative ReLU outputs}: Could cause vanishing gradients (not handled)
+\end{enumerate}
+
+\subsection{Recommendations}
+
+\begin{lstlisting}[language=C, caption={Recommended error checking}]
+// Check malloc
+float *buf = (float *)malloc(size * sizeof(float));
+if (!buf) {
+    fprintf(stderr, "Memory allocation failed\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
+// Check MPI operations
+int ret = MPI_Send(...);
+if (ret != MPI_SUCCESS) {
+    char error_string[MPI_MAX_ERROR_STRING];
+    int length;
+    MPI_Error_string(ret, error_string, &length);
+    fprintf(stderr, "MPI Error: %s\n", error_string);
+    MPI_Abort(MPI_COMM_WORLD, 1);
+}
+\end{lstlisting}
+
+% ============================================================
+% COMPLEXITY & PERFORMANCE
+% ============================================================
+\section{Complexity \& Performance Notes}
+
+\subsection{Time Complexity}
+
+For one training sample with layer sizes $n_0 = 784$, $n_1 = 256$, $n_2 = 128$, $n_3 = 10$:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llc@{}}
+\toprule
+\textbf{Operation} & \textbf{Complexity} & \textbf{Dominant Term} \\
+\midrule
+Dense Forward (Layer 1) & $O(n_0 \times n_1)$ & $O(200,704)$ \\
+Dense Forward (Layer 2) & $O(n_1 \times n_2)$ & $O(32,768)$ \\
+Dense Forward (Layer 3) & $O(n_2 \times n_3)$ & $O(1,280)$ \\
+Dense Backward (each) & Same as forward & -- \\
+ReLU Forward/Backward & $O(n)$ & Negligible \\
+Softmax & $O(n_3)$ & Negligible \\
+\midrule
+\textbf{Total per sample} & $O(n_0 n_1 + n_1 n_2 + n_2 n_3)$ & $\approx O(235,000)$ \\
+\bottomrule
+\end{tabular}
+\caption{Time complexity analysis}
+\end{table}
+
+\subsection{Memory Complexity}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component} & \textbf{Size (floats)} & \textbf{Process} \\
+\midrule
+Layer 1 weights + gradients & $2 \times 784 \times 256 = 401,408$ & P0 \\
+Layer 1 bias + gradients & $2 \times 256 = 512$ & P0 \\
+Layer 2 weights + gradients & $2 \times 256 \times 128 = 65,536$ & P1 \\
+Layer 3 weights + gradients & $2 \times 128 \times 10 = 2,560$ & P2 \\
+Activation buffers & $\approx 2,000$ per process & All \\
+Training images (P0 only) & $60,000 \times 784 = 47,040,000$ & P0 \\
+\bottomrule
+\end{tabular}
+\caption{Memory usage breakdown}
+\end{table}
+
+\subsection{Communication Overhead}
+
+Per training sample:
+\begin{itemize}
+    \item Forward: $256 + 128 + 1 = 385$ values $\approx 1.5$ KB
+    \item Backward: $128 + 256 = 384$ values $\approx 1.5$ KB
+    \item \textbf{Total}: $\approx 3$ KB per sample
+\end{itemize}
+
+For 60,000 samples $\times$ 10 epochs:
+\begin{itemize}
+    \item Total data transferred: $\approx 1.8$ GB
+\end{itemize}
+
+\subsection{Performance Bottlenecks}
+
+\begin{enumerate}
+    \item \textbf{Communication latency}: Blocking sends/receives create idle time
+    \item \textbf{Pipeline bubble}: Processes wait for each other (no overlap)
+    \item \textbf{Unbalanced workload}: Layer 1 has most computation
+    \item \textbf{Sequential samples}: No batch-level parallelism
+\end{enumerate}
+
+\subsection{Potential Optimizations}
+
+\begin{itemize}
+    \item Use \texttt{MPI\_Isend}/\texttt{MPI\_Irecv} for non-blocking communication
+    \item Implement \textbf{micro-batching} to overlap computation and communication
+    \item Use \texttt{MPI\_Sendrecv} to combine operations
+    \item Add SIMD vectorization for matrix operations
+    \item Use BLAS libraries for dense operations
+\end{itemize}
+
+% ============================================================
+% HOW TO RUN
+% ============================================================
+\section{How to Run / Example Usage}
+
+\subsection{Prerequisites}
+
+\begin{enumerate}
+    \item Install MPI implementation:
+    \begin{lstlisting}[language=bash]
+# Ubuntu/Debian
+sudo apt-get install openmpi-bin libopenmpi-dev
+
+# macOS with Homebrew
+brew install open-mpi
+
+# CentOS/RHEL
+sudo yum install openmpi openmpi-devel
+    \end{lstlisting}
+    
+    \item Download MNIST dataset and place in \texttt{data/} directory
+\end{enumerate}
+
+\subsection{Compilation}
+
+\begin{lstlisting}[language=bash, caption={Compilation commands}]
+# Using Makefile
+make
+
+# Manual compilation
+mpicc -Wall -O3 -std=c99 -o fcn_mpi fcn_mpi.c -lm
+\end{lstlisting}
+
+\subsection{Execution}
+
+\begin{lstlisting}[language=bash, caption={Running the program}]
+# Standard execution (requires 3+ CPU cores)
+mpirun -np 3 ./fcn_mpi
+
+# If you have fewer than 3 cores
+mpirun -np 3 --oversubscribe ./fcn_mpi
+
+# On a cluster with hostfile
+mpirun -np 3 --hostfile hosts.txt ./fcn_mpi
+\end{lstlisting}
+
+\subsection{Expected Output}
+
+\begin{lstlisting}[caption={Sample output}]
+==============================================
+Pipeline Parallelism Neural Network with MPI
+==============================================
+Architecture: 784 -> 256 -> 128 -> 10
+Process 0: Input + Hidden Layer 1
+Process 1: Hidden Layer 2
+Process 2: Output Layer + Loss
+==============================================
+
+Loaded 60000 training samples and 10000 test samples
+
+[Process 0] Starting training with 60000 samples
+[Process 1] Ready for training
+[Process 2] Ready for training
+Epoch 1 | Loss: 0.5331 | Time: 17.35 s
+Epoch 2 | Loss: 0.3920 | Time: 17.65 s
+...
+Epoch 10 | Loss: 0.2541 | Time: 18.51 s
+[Process 0] Starting evaluation with 10000 samples
+[Process 1] Ready for evaluation
+[Process 2] Ready for evaluation
+Test Accuracy: 84.92%
+
+Total execution time: 189.37 seconds
+\end{lstlisting}
+
+% ============================================================
+% TESTING SUGGESTIONS
+% ============================================================
+\section{Testing Suggestions}
+
+\subsection{Unit Tests}
+
+\begin{enumerate}
+    \item \textbf{Tensor operations}:
+    \begin{itemize}
+        \item Verify \texttt{tensor\_create} allocates correct size
+        \item Test \texttt{tensor\_zero} sets all elements to 0
+        \item Check \texttt{tensor\_free} handles NULL gracefully
+    \end{itemize}
+    
+    \item \textbf{Dense layer}:
+    \begin{itemize}
+        \item Forward pass with known weights (hand-calculated expected output)
+        \item Backward pass gradient verification using finite differences
+    \end{itemize}
+    
+    \item \textbf{Activations}:
+    \begin{itemize}
+        \item ReLU: Test with positive, negative, and zero values
+        \item Softmax: Verify output sums to 1.0
+        \item Softmax: Test numerical stability with large inputs
+    \end{itemize}
+    
+    \item \textbf{Loss functions}:
+    \begin{itemize}
+        \item Cross-entropy with perfect prediction (should be $\approx 0$)
+        \item Cross-entropy with zero probability (should use EPSILON)
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Integration Tests}
+
+\begin{enumerate}
+    \item \textbf{Single sample training}: Verify loss decreases
+    \item \textbf{Overfitting test}: Train on 10 samples, expect $\sim$100\% accuracy
+    \item \textbf{Determinism}: Same seed should produce same results
+\end{enumerate}
+
+\subsection{MPI-Specific Tests}
+
+\begin{enumerate}
+    \item \textbf{Message ordering}: Verify messages arrive in correct order
+    \item \textbf{Deadlock detection}: Run with timeout to catch hangs
+    \item \textbf{Process failure}: Test behavior if one process crashes
+\end{enumerate}
+
+\subsection{Performance Tests}
+
+\begin{enumerate}
+    \item \textbf{Scalability}: Compare with sequential version
+    \item \textbf{Communication overhead}: Profile time spent in MPI calls
+    \item \textbf{Memory usage}: Monitor with \texttt{valgrind} or \texttt{massif}
+\end{enumerate}
+
+% ============================================================
+% IMPROVEMENTS
+% ============================================================
+\section{Improvements / Refactoring Opportunities}
+
+\subsection{High Priority}
+
+\begin{enumerate}
+    \item \textbf{Add error checking for memory allocation}
+    \begin{itemize}
+        \item All \texttt{malloc}/\texttt{calloc} calls should check for NULL
+        \item Use \texttt{MPI\_Abort} on failure for clean shutdown
+    \end{itemize}
+    
+    \item \textbf{Check MPI function return values}
+    \begin{itemize}
+        \item All MPI calls can fail; check return codes
+        \item Implement proper error handling and reporting
+    \end{itemize}
+    
+    \item \textbf{Add batch processing}
+    \begin{itemize}
+        \item Current implementation processes one sample at a time
+        \item Mini-batches would improve GPU utilization and convergence
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Medium Priority}
+
+\begin{enumerate}
+    \item \textbf{Use non-blocking MPI operations}
+    \begin{lstlisting}[language=C]
+MPI_Request req;
+MPI_Isend(a1, size, MPI_FLOAT, 1, tag, comm, &req);
+// Do computation while message is in flight
+MPI_Wait(&req, &status);
+    \end{lstlisting}
+    
+    \item \textbf{Implement micro-batching for pipeline efficiency}
+    \begin{itemize}
+        \item Process multiple samples simultaneously
+        \item Reduces pipeline ``bubbles''
+    \end{itemize}
+    
+    \item \textbf{Add model checkpointing}
+    \begin{itemize}
+        \item Save weights periodically
+        \item Allow resuming training
+    \end{itemize}
+    
+    \item \textbf{Configurable hyperparameters}
+    \begin{itemize}
+        \item Command-line arguments for learning rate, epochs, etc.
+        \item Configuration file support
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Low Priority}
+
+\begin{enumerate}
+    \item \textbf{Use BLAS for matrix operations}
+    \begin{itemize}
+        \item Replace manual loops with optimized BLAS calls
+        \item Significant performance improvement expected
+    \end{itemize}
+    
+    \item \textbf{Add more layer types}
+    \begin{itemize}
+        \item Dropout for regularization
+        \item Batch normalization
+    \end{itemize}
+    
+    \item \textbf{Support variable number of processes}
+    \begin{itemize}
+        \item Dynamically assign layers to processes
+        \item Better load balancing
+    \end{itemize}
+    
+    \item \textbf{Add logging and profiling}
+    \begin{itemize}
+        \item Detailed timing information
+        \item Communication statistics
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Code Quality}
+
+\begin{enumerate}
+    \item \textbf{Separate into multiple files}
+    \begin{itemize}
+        \item \texttt{tensor.c/h}, \texttt{layer.c/h}, \texttt{mnist.c/h}
+        \item Improves maintainability and reusability
+    \end{itemize}
+    
+    \item \textbf{Add comprehensive documentation}
+    \begin{itemize}
+        \item Doxygen-style comments for all functions
+        \item README with architecture diagrams
+    \end{itemize}
+    
+    \item \textbf{Implement proper cleanup on error}
+    \begin{itemize}
+        \item Use goto-based cleanup pattern
+        \item Ensure all resources are freed on any exit path
+    \end{itemize}
+\end{enumerate}
+
+% ============================================================
+% OPEN QUESTIONS
+% ============================================================
+\section{Open Questions}
+
+The following aspects are unclear or could not be determined from the code:
+
+\begin{enumerate}
+    \item \textbf{Weight initialization strategy}: Why use uniform $[-0.05, 0.05]$ instead of Xavier/He initialization?
+    
+    \item \textbf{Learning rate schedule}: Is a fixed learning rate optimal, or would decay improve results?
+    
+    \item \textbf{Batch size}: Why process samples one at a time instead of mini-batches?
+    
+    \item \textbf{Target accuracy}: What is the expected accuracy for this architecture on MNIST?
+    
+    \item \textbf{Scalability goals}: Is this intended for larger networks or just as a demonstration?
+    
+    \item \textbf{Dataset compatibility}: Does this work with Fashion-MNIST without modification?
+    
+    \item \textbf{Cluster deployment}: Are there specific MPI configurations recommended for multi-node execution?
+\end{enumerate}
+
+% ============================================================
+% APPENDIX
+% ============================================================
+\appendix
+
+\section{Complete Source Code}
+
+The complete source code is available in \texttt{fcn\_mpi.c}. Key sections include:
+
+\begin{itemize}
+    \item Lines 1--38: Configuration and includes
+    \item Lines 40--70: Tensor structure and operations
+    \item Lines 72--145: Dense layer implementation
+    \item Lines 147--200: Activation and loss functions
+    \item Lines 202--270: MNIST loading
+    \item Lines 272--350: Process 0 implementation
+    \item Lines 352--410: Process 1 implementation
+    \item Lines 412--480: Process 2 implementation
+    \item Lines 482--540: Main function
+\end{itemize}
+
+\section{MPI Quick Reference}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Function} & \textbf{Purpose} \\
+\midrule
+\texttt{MPI\_Init} & Initialize MPI environment \\
+\texttt{MPI\_Finalize} & Clean up MPI environment \\
+\texttt{MPI\_Comm\_rank} & Get process rank (ID) \\
+\texttt{MPI\_Comm\_size} & Get total number of processes \\
+\texttt{MPI\_Send} & Blocking send \\
+\texttt{MPI\_Recv} & Blocking receive \\
+\texttt{MPI\_Bcast} & Broadcast from one to all \\
+\texttt{MPI\_Abort} & Terminate all processes \\
+\texttt{MPI\_Wtime} & Wall-clock time \\
+\bottomrule
+\end{tabular}
+\caption{MPI functions used in this program}
+\end{table}
+
+% ============================================================
+% END DOCUMENT
+% ============================================================
+\end{document}

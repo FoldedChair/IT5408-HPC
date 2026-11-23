@@ -1,0 +1,8 @@
+Config,Epochs,LearningRate,FinalLoss,AccuracyPercent,TotalTimeSec,Notes
+Baseline,10,0.01,0.2547,87.16%,1791.2s,
+LR_0.005,1,0.005,0.5519,84.37%,151.31s,
+LR_0.05,1,0.05,1.1547,44.27%,154.07 s,
+Epochs_5,5,0.01,0.3083,86.38%, 733.70 s,
+Opt_O0,1,0.01,0.5323,83.68%,140.00 s,
+Opt_O2,1,0.01,0.5323,83.68%,47.54 s,
+,,,,,,
