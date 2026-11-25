@@ -283,6 +283,9 @@ void process_0_run(Dataset *train, Dataset *test, int num_samples) {
 
     printf("[Process 0] Starting training with %d samples\n", num_samples);
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double train_start = MPI_Wtime();    
+
     for (int epoch = 0; epoch < EPOCHS; epoch++) {
         double epoch_start = MPI_Wtime();
 
@@ -319,6 +322,14 @@ void process_0_run(Dataset *train, Dataset *test, int num_samples) {
 
         printf("Epoch %d | Loss: %.4f | Time: %.2f s\n", epoch + 1, avg_loss, epoch_end - epoch_start);
     }
+
+    double train_elapsed = MPI_Wtime() - train_start;
+    double max_train_elapsed;
+
+    MPI_Reduce(&train_elapsed, &max_train_elapsed, 1,
+               MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    printf("\nMPI Training time: %.2f seconds\n", max_train_elapsed);
 
     /* ========== Evaluation ========== */
     printf("[Process 0] Starting evaluation with %d samples\n", test->num_samples);
@@ -365,6 +376,9 @@ void process_1_run(int num_train_samples, int num_test_samples) {
 
     printf("[Process 1] Ready for training\n");
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double train_start = MPI_Wtime();
+
     for (int epoch = 0; epoch < EPOCHS; epoch++) {
         for (int i = 0; i < num_train_samples; i++) {
             /* Receive activation from Process 0 */
@@ -391,6 +405,12 @@ void process_1_run(int num_train_samples, int num_test_samples) {
             sgd_update(&l2, LEARNING_RATE);
         }
     }
+
+    double train_elapsed = MPI_Wtime() - train_start;
+    double max_train_elapsed;
+
+    MPI_Reduce(&train_elapsed, &max_train_elapsed, 1,
+               MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     /* ========== Evaluation ========== */
     printf("[Process 1] Ready for evaluation\n");
@@ -430,6 +450,9 @@ void process_2_run(int num_train_samples, int num_test_samples) {
 
     printf("[Process 2] Ready for training\n");
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double train_start = MPI_Wtime();
+
     for (int epoch = 0; epoch < EPOCHS; epoch++) {
         float total_loss = 0.0f;
 
@@ -463,6 +486,12 @@ void process_2_run(int num_train_samples, int num_test_samples) {
         float avg_loss = total_loss / num_train_samples;
         MPI_Send(&avg_loss, 1, MPI_FLOAT, 0, TAG_LOSS, MPI_COMM_WORLD);
     }
+
+    double train_elapsed = MPI_Wtime() - train_start;
+    double max_train_elapsed;
+
+    MPI_Reduce(&train_elapsed, &max_train_elapsed, 1,
+               MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     /* ========== Evaluation ========== */
     printf("[Process 2] Ready for evaluation\n");
@@ -572,7 +601,7 @@ int main(int argc, char *argv[]) {
     double end_time = MPI_Wtime();
 
     if (rank == 0) {
-        printf("\nTotal execution time: %.2f seconds\n", end_time - start_time);
+        printf("\nTotal runtime (training + evaluation): %.2f seconds\n", end_time - start_time);
         free_dataset(&train);
         free_dataset(&test);
     }
