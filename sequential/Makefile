@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -std=c11 -O3 -Wall -Wextra -pedantic
+CFLAGS = -std=c99 -O3 -Wall -Wextra -pedantic
 INCLUDES = -I.
 
 SRC = \
