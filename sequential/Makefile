@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -std=c11 -O0 -Wall -Wextra -pedantic
+CFLAGS = -std=c11 -O3 -Wall -Wextra -pedantic
 INCLUDES = -I.
 
 SRC = \
@@ -20,7 +20,7 @@ OBJ = $(SRC:.c=.o)
 all: digits_nn
 
 digits_nn: $(OBJ)
-	$(CC) $(CFLAGS) -o digits_nn $(OBJ)
+	$(CC) $(CFLAGS) -o digits_nn $(OBJ) -lm
 
 clean:
 	rm -f $(OBJ) digits_nn

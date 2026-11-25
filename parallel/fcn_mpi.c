@@ -256,10 +256,10 @@ uint8_t *read_idx_labels(const char *path, int *count) {
 }
 
 void load_mnist(Dataset *train, Dataset *test) {
-    train->images = read_idx_images("data/train-images-idx3-ubyte", &train->num_samples);
-    train->labels = read_idx_labels("data/train-labels-idx1-ubyte", &train->num_samples);
-    test->images = read_idx_images("data/t10k-images-idx3-ubyte", &test->num_samples);
-    test->labels = read_idx_labels("data/t10k-labels-idx1-ubyte", &test->num_samples);
+    train->images = read_idx_images("../data/train-images-idx3-ubyte", &train->num_samples);
+    train->labels = read_idx_labels("../data/train-labels-idx1-ubyte", &train->num_samples);
+    test->images = read_idx_images("../data/t10k-images-idx3-ubyte", &test->num_samples);
+    test->labels = read_idx_labels("../data/t10k-labels-idx1-ubyte", &test->num_samples);
 }
 
 void free_dataset(Dataset *d) {
