@@ -1,0 +1,25 @@
+==============================================
+Pipeline Parallelism Neural Network with MPI
+==============================================
+Architecture: 784 -> 256 -> 128 -> 10
+Process 0: Input + Hidden Layer 1
+Process 1: Hidden Layer 2
+Process 2: Output Layer + Loss
+==============================================
+
+Loaded 60000 training samples and 10000 test samples
+
+Epoch 1 | Loss: 1.218259 | Time: 10.21 s
+Epoch 2 | Loss: 0.630786 | Time: 11.88 s
+Epoch 3 | Loss: 0.527742 | Time: 10.72 s
+Epoch 4 | Loss: 0.482691 | Time: 10.05 s
+Epoch 5 | Loss: 0.455565 | Time: 10.83 s
+Epoch 6 | Loss: 0.435038 | Time: 9.40 s
+Epoch 7 | Loss: 0.417668 | Time: 9.42 s
+Epoch 8 | Loss: 0.402600 | Time: 9.08 s
+Epoch 9 | Loss: 0.389125 | Time: 8.92 s
+Epoch 10 | Loss: 0.377114 | Time: 8.69 s
+MPI Training time: 99.22 seconds
+Test Accuracy: 85.29%
+
+Total runtime (initialization + training + evaluation): 100.19 seconds

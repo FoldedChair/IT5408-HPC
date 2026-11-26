@@ -1,0 +1,13 @@
+Epoch 1 | Loss: 1.382886 | Time: 12.46 s
+Epoch 2 | Loss: 0.418572 | Time: 12.42 s
+Epoch 3 | Loss: 0.328001 | Time: 12.81 s
+Epoch 4 | Loss: 0.283514 | Time: 13.14 s
+Epoch 5 | Loss: 0.250091 | Time: 12.53 s
+Epoch 6 | Loss: 0.222109 | Time: 13.32 s
+Epoch 7 | Loss: 0.198509 | Time: 13.23 s
+Epoch 8 | Loss: 0.178548 | Time: 13.22 s
+Epoch 9 | Loss: 0.161646 | Time: 13.15 s
+Epoch 10 | Loss: 0.147152 | Time: 13.18 s
+Total training time: 129.47 s
+Accuracy: 95.64%
+Total runtime (initialization + training + evaluation): 130.39 s
