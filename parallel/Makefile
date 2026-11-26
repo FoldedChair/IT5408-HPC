@@ -17,7 +17,7 @@ SRC = fcn_mpi.c
 # Build main target
 all: $(TARGET)
 
-$(TARGET): $(SRC)
+$(TARGET): $(SRC) pipeline_batch.h
 	$(MPICC) $(CFLAGS) -o $@ $< $(LIBS)
 
 # Clean

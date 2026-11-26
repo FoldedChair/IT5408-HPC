@@ -117,13 +117,13 @@ void dense_backward(DenseLayer *l, float *grad_out, float *grad_in) {
     /* dW = grad_out * input^T */
     for (int i = 0; i < out; i++) {
         for (int j = 0; j < in; j++) {
-            l->grad_w.data[i * in + j] = grad_out[i] * l->input_cache.data[j];
+            l->grad_w.data[i * in + j] += grad_out[i] * l->input_cache.data[j];
         }
     }
 
     /* db */
     for (int i = 0; i < out; i++) {
-        l->grad_b.data[i] = grad_out[i];
+        l->grad_b.data[i] += grad_out[i];
     }
 
     /* dInput = W^T * grad_out */
@@ -532,6 +532,8 @@ void process_2_run(int num_train_samples, int num_test_samples) {
     dense_free(&l3);
 }
 
+#include "pipeline_batch.h"
+
 /* ========== Main Function ========== */
 int main(int argc, char *argv[]) {
     int rank, size;
@@ -549,7 +551,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    srand(42 + rank);  /* Different seed for each process, but reproducible */
+    srand(42);
+    int skip = rank == 0 ? 0 : INPUT_SIZE * HIDDEN1_SIZE;
+    if (rank == 2) skip += HIDDEN1_SIZE * HIDDEN2_SIZE;
+    for (int i = 0; i < skip; i++) (void)rand();
 
     Dataset train = {0}, test = {0};
     int num_train_samples = 0, num_test_samples = 0;
@@ -575,6 +580,13 @@ int main(int argc, char *argv[]) {
 
         num_train_samples = train.num_samples;
         num_test_samples = test.num_samples;
+        const char *limit = getenv("TRAIN_LIMIT");
+        if (limit && atoi(limit) > 0 && atoi(limit) < num_train_samples)
+            num_train_samples = atoi(limit);
+        limit = getenv("TEST_LIMIT");
+        if (limit && atoi(limit) > 0 && atoi(limit) < num_test_samples)
+            num_test_samples = atoi(limit);
+        test.num_samples = num_test_samples;
 
         printf("Loaded %d training samples and %d test samples\n\n", num_train_samples, num_test_samples);
     }
@@ -586,22 +598,12 @@ int main(int argc, char *argv[]) {
     double start_time = MPI_Wtime();
 
     /* Run process-specific functions */
-    switch (rank) {
-        case 0:
-            process_0_run(&train, &test, num_train_samples);
-            break;
-        case 1:
-            process_1_run(num_train_samples, num_test_samples);
-            break;
-        case 2:
-            process_2_run(num_train_samples, num_test_samples);
-            break;
-    }
+    pipeline_batch_run(rank, &train, &test, num_train_samples, num_test_samples);
 
     double end_time = MPI_Wtime();
 
     if (rank == 0) {
-        printf("\nTotal runtime (training + evaluation): %.2f seconds\n", end_time - start_time);
+        printf("\nTotal runtime (initialization + training + evaluation): %.2f seconds\n", end_time - start_time);
         free_dataset(&train);
         free_dataset(&test);
     }

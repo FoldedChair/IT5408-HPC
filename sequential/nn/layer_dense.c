@@ -42,14 +42,14 @@ void dense_backward(DenseLayer *l, Tensor *grad_out, Tensor *grad_in)
     /* dW = grad_out * input^T */
     for (int i = 0; i < out; i++) {
         for (int j = 0; j < in; j++) {
-            l->grad_w.data[i * in + j] =
+            l->grad_w.data[i * in + j] +=
                 grad_out->data[i] * l->input_cache.data[j];
         }
     }
 
     /* db */
     for (int i = 0; i < out; i++) {
-        l->grad_b.data[i] = grad_out->data[i];
+        l->grad_b.data[i] += grad_out->data[i];
     }
 
     /* dInput = W^T * grad_out */

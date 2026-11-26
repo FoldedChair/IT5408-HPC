@@ -6,7 +6,7 @@
 #define NUM_CLASSES    10
 
 /* Training */
-#define BATCH_SIZE     64
+#define BATCH_SIZE     32
 #define EPOCHS         10
 #define LEARNING_RATE  0.01f
 

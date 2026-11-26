@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "network.h"
 #include "activations.h"
 #include "loss.h"
@@ -5,6 +6,14 @@
 #include "../config.h"
 #include <stdio.h>
 #include <time.h>
+#include <stdlib.h>
+
+static double wall_time(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec + t.tv_nsec / 1e9;
+}
 
 void network_init(Network *net)
 {
@@ -31,12 +40,16 @@ void network_train(Network *net, Dataset *d)
     Tensor grad_a1 = tensor_create(256, 1);
     Tensor grad_z1 = tensor_create(256, 1);
 
-    clock_t total_start = clock();
-    double total_time = 0.0;
+    double total_start = wall_time();
 
-    for (int epoch = 0; epoch < EPOCHS; epoch++) {
-        clock_t epoch_start = clock();
+    const char *epoch_env = getenv("TRAIN_EPOCHS");
+    int epochs = epoch_env && atoi(epoch_env) > 0 ? atoi(epoch_env) : EPOCHS;
+    for (int epoch = 0; epoch < epochs; epoch++) {
+        double epoch_start = wall_time();
         float total_loss = 0.0f;
+        tensor_zero(&net->l1.grad_w); tensor_zero(&net->l1.grad_b);
+        tensor_zero(&net->l2.grad_w); tensor_zero(&net->l2.grad_b);
+        tensor_zero(&net->l3.grad_w); tensor_zero(&net->l3.grad_b);
 
         for (int i = 0; i < d->num_samples; i++) {
 
@@ -67,28 +80,56 @@ void network_train(Network *net, Dataset *d)
             dense_backward(&net->l1, &grad_z1, &x);
 
             /* Update */
-            sgd_update(&net->l3, LEARNING_RATE);
-            sgd_update(&net->l2, LEARNING_RATE);
-            sgd_update(&net->l1, LEARNING_RATE);
+            if ((i + 1) % BATCH_SIZE == 0 || i + 1 == d->num_samples) {
+                int count = (i % BATCH_SIZE) + 1;
+                sgd_update(&net->l3, LEARNING_RATE / count);
+                sgd_update(&net->l2, LEARNING_RATE / count);
+                sgd_update(&net->l1, LEARNING_RATE / count);
+                tensor_zero(&net->l1.grad_w); tensor_zero(&net->l1.grad_b);
+                tensor_zero(&net->l2.grad_w); tensor_zero(&net->l2.grad_b);
+                tensor_zero(&net->l3.grad_w); tensor_zero(&net->l3.grad_b);
+            }
         }
         
-        clock_t epoch_end = clock();
-        double epoch_time =
-            (double)(epoch_end - epoch_start) / CLOCKS_PER_SEC;
+        double epoch_time = wall_time() - epoch_start;
 
-        total_time += epoch_time;
-
-        printf("Epoch %d | Loss: %.4f | Time: %.2f s\n",
+        printf("Epoch %d | Loss: %.6f | Time: %.2f s\n",
                epoch + 1,
                total_loss / d->num_samples,
                epoch_time);
     }
 
-    clock_t total_end = clock();
-    double measured_total =
-        (double)(total_end - total_start) / CLOCKS_PER_SEC;
+    double measured_total = wall_time() - total_start;
 
     printf("Total training time: %.2f s\n", measured_total);
+    const char *dump_prefix = getenv("DUMP_PARAMETERS");
+    if (dump_prefix) {
+        DenseLayer *layers[] = {&net->l1, &net->l2, &net->l3};
+        for (int k = 0; k < 3; k++) {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s%d.bin", dump_prefix, k + 1);
+            FILE *file = fopen(path, "wb");
+            if (!file) { perror(path); exit(EXIT_FAILURE); }
+            size_t n = (size_t)layers[k]->weights.rows * layers[k]->weights.cols;
+            size_t b = (size_t)layers[k]->bias.rows;
+            if (fwrite(layers[k]->weights.data, sizeof(float), n, file) != n ||
+                fwrite(layers[k]->bias.data, sizeof(float), b, file) != b || fclose(file)) {
+                fprintf(stderr, "Cannot write %s\n", path); exit(EXIT_FAILURE);
+            }
+        }
+    }
+    if (getenv("CHECK_WEIGHTS")) {
+        DenseLayer *layers[] = {&net->l1, &net->l2, &net->l3};
+        for (int k = 0; k < 3; k++) {
+            double sum = 0.0, squares = 0.0;
+            int n = layers[k]->weights.rows * layers[k]->weights.cols;
+            for (int j = 0; j < n; j++) {
+                double v = layers[k]->weights.data[j];
+                sum += v; squares += v * v;
+            }
+            printf("Layer %d weights: %.12g %.12g\n", k + 1, sum, squares);
+        }
+    }
 
     tensor_free(&x);
     tensor_free(&z1);
